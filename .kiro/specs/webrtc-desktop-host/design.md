@@ -2,32 +2,49 @@
 
 ## Overview
 
-The WebRTC Desktop Host App is an Electron-based desktop application that captures the Windows desktop and streams it to remote users via WebRTC peer connections. The design prioritizes low latency, efficient resource usage, and reliable connection management. The architecture separates concerns into distinct layers: UI, WebRTC management, desktop capture, and signaling communication.
+The WebRTC Desktop Host App is a two-component system: (1) an Electron-based desktop application that captures the Windows desktop and manages WebRTC peer connections, and (2) a local Python signaling server that facilitates connection establishment. The host user runs both components locally and port-forwards a single port to expose the signaling server to the internet. Remote users connect directly to the host's IP address and port. The design prioritizes low latency, efficient resource usage, reliable connection management, and user control over infrastructure.
 
 ## Architecture
 
-The application follows a layered architecture:
+The system consists of two components running on the host machine:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Electron Main Process              │
-│  (Window Management, App Lifecycle, Native Modules) │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Host Machine                              │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │         Electron Host Application                      │ │
+│  │  ┌──────────────────────────────────────────────────┐  │ │
+│  │  │  Electron Main Process                           │  │ │
+│  │  │  (Window Management, App Lifecycle)              │  │ │
+│  │  └──────────────────────────────────────────────────┘  │ │
+│  │                      ↓                                  │ │
+│  │  ┌──────────────────────────────────────────────────┐  │ │
+│  │  │  WebRTC Connection Manager                       │  │ │
+│  │  │  (Peer Management, Stream Control)               │  │ │
+│  │  └──────────────────────────────────────────────────┘  │ │
+│  │                      ↓                                  │ │
+│  │  ┌──────────────────┬──────────────────────────────┐   │ │
+│  │  │ Desktop Capture  │  Audio Capture               │   │ │
+│  │  │ (Screen Record)  │  (System Audio)              │   │ │
+│  │  └──────────────────┴──────────────────────────────┘   │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │    Local Python Signaling Server                       │ │
+│  │  (WebSocket Server, SDP/ICE Exchange, Connection Mgmt) │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Port Forwarding (Router Configuration)             │   │
+│  │  Exposes: localhost:port → Internet                 │   │
+│  └─────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────┐
-│              WebRTC Connection Manager               │
-│  (Peer Management, SDP/ICE Handling, Stream Control)│
-└─────────────────────────────────────────────────────┘
-                          ↓
-┌──────────────────────┬──────────────────────────────┐
-│  Desktop Capture     │    Audio Capture             │
-│  (Screen Recording)  │    (System Audio)            │
-└──────────────────────┴──────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────┐
-│         Signaling Server Communication              │
-│  (Room Registration, ICE Candidate Exchange)        │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│              Remote Users (Internet)                         │
+│  Connect to: host_ip:port → Local Signaling Server          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Components and Interfaces
@@ -69,26 +86,41 @@ The application follows a layered architecture:
   - `getAudioLevel()`: Return current audio level for UI display
   - **Output**: MediaStream with audio track (Opus encoded)
 
-### 5. Signaling Client
-- **Responsibility**: Communicate with signaling server for connection establishment
+### 5. Local Signaling Server (Python)
+- **Responsibility**: Facilitate WebRTC connection establishment between host and remote users
 - **Key Methods**:
-  - `connect(serverUrl)`: Connect to signaling server
-  - `registerRoom(roomCode)`: Register host with room code
-  - `sendOffer(userId, offer)`: Send SDP offer to remote user via server
-  - `sendICECandidate(userId, candidate)`: Send ICE candidate to remote user
-  - `notifyUserConnected(userId)`: Inform server of new connection
-  - `notifyUserDisconnected(userId)`: Inform server of disconnection
+  - `start(port)`: Start WebSocket server on specified port
+  - `stop()`: Shut down the server and close all connections
+  - `handleRemoteConnection(clientId)`: Accept incoming connection from remote user
+  - `relayOffer(clientId, offer)`: Relay SDP offer from remote user to host
+  - `relayAnswer(clientId, answer)`: Relay SDP answer from host to remote user
+  - `relayICECandidate(clientId, candidate)`: Relay ICE candidate between peers
+  - `handleDisconnection(clientId)`: Clean up resources when client disconnects
+  - **Output**: WebSocket server listening on configurable port
+
+### 6. Signaling Client (Electron)
+- **Responsibility**: Communicate with local signaling server for connection establishment
+- **Key Methods**:
+  - `connectToServer(serverUrl)`: Connect to local signaling server via WebSocket
+  - `sendOffer(offer)`: Send SDP offer to remote user via server
+  - `sendAnswer(answer)`: Send SDP answer to remote user via server
+  - `sendICECandidate(candidate)`: Send ICE candidate to remote user
+  - `handleRemoteOffer(offer)`: Process incoming SDP offer from remote user
+  - `handleRemoteAnswer(answer)`: Process incoming SDP answer from remote user
+  - `handleRemoteICECandidate(candidate)`: Process incoming ICE candidate
   - `disconnect()`: Close connection to signaling server
 
-### 6. UI Controller
+### 7. UI Controller
 - **Responsibility**: Manage user interface and display state
 - **Key Methods**:
-  - `displayRoomCode(code)`: Show room code to user
+  - `displayHostInfo(ipAddress, port)`: Show host IP address and signaling port to user
+  - `displayServerStatus(isRunning)`: Show local signaling server status
   - `updateConnectionCount(count)`: Update connected users display
   - `updateConnectionList(users)`: Display list of connected users
   - `displayError(message)`: Show error message to user
   - `updateStreamStats(stats)`: Display bitrate, latency, FPS metrics
   - `showDisplaySelector()`: Present display selection interface
+  - `displayPortForwardingInstructions()`: Show port forwarding setup guide
 
 ## Data Models
 

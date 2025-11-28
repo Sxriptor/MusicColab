@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ConnectionStatus } from './components/ConnectionStatus';
-import { RoomCodeDisplay } from './components/RoomCodeDisplay';
+import { HostInfoDisplay } from './components/HostInfoDisplay';
 import { ControlPanel } from './components/ControlPanel';
 import { ConnectedUsersList, ConnectedUser } from './components/ConnectedUsersList';
 import { StreamStats, StreamStatsData } from './components/StreamStats';
@@ -8,7 +8,9 @@ import { DisplaySelector, DisplayOption } from './components/DisplaySelector';
 import { ErrorDisplay, ErrorInfo } from './components/ErrorDisplay';
 
 export const App: React.FC = () => {
-  const [roomCode, setRoomCode] = useState<string>('');
+  const [hostIp, setHostIp] = useState<string>('');
+  const [signalingPort, setSignalingPort] = useState<number>(8765);
+  const [serverStatus, setServerStatus] = useState<'running' | 'stopped' | 'starting' | 'error'>('stopped');
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
   const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
   const [displays, setDisplays] = useState<DisplayOption[]>([]);
@@ -21,15 +23,21 @@ export const App: React.FC = () => {
   });
   const [error, setError] = useState<ErrorInfo | null>(null);
   const [activeTab, setActiveTab] = useState<'host' | 'join'>('host');
-  const [joinCode, setJoinCode] = useState<string>('');
+  const [joinIp, setJoinIp] = useState<string>('');
+  const [joinPort, setJoinPort] = useState<string>('8765');
   
   const videoStreamRef = useRef<MediaStream | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    const handleRoomCodeGenerated = (code: string) => {
-      setRoomCode(code);
+    const handleHostInfoUpdated = (info: { ip: string; port: number }) => {
+      setHostIp(info.ip);
+      setSignalingPort(info.port);
+    };
+
+    const handleServerStatusChanged = (status: 'running' | 'stopped' | 'starting' | 'error') => {
+      setServerStatus(status);
     };
 
     const handleCaptureStopped = () => {
@@ -68,7 +76,8 @@ export const App: React.FC = () => {
     };
 
     if (window.electron) {
-      window.electron.ipcRenderer.on('room-code-generated', (_, code: string) => handleRoomCodeGenerated(code));
+      window.electron.ipcRenderer.on('host-info-updated', (_, info: { ip: string; port: number }) => handleHostInfoUpdated(info));
+      window.electron.ipcRenderer.on('server-status-changed', (_, status: 'running' | 'stopped' | 'starting' | 'error') => handleServerStatusChanged(status));
       window.electron.ipcRenderer.on('capture-stopped', () => handleCaptureStopped());
       window.electron.ipcRenderer.on('user-connected', (_, user: ConnectedUser) => handleUserConnected(user));
       window.electron.ipcRenderer.on('user-disconnected', (_, userId: string) => handleUserDisconnected(userId));
@@ -81,10 +90,18 @@ export const App: React.FC = () => {
         handleDisplaysUpdated(displayList);
       }).catch(() => {});
       
-      // Request room code in case it was generated before listener was attached
-      (window.electron.ipcRenderer.invoke('get-room-code') as Promise<string>).then((code: string) => {
-        if (code) {
-          setRoomCode(code);
+      // Request host info
+      (window.electron.ipcRenderer.invoke('get-host-info') as Promise<{ ip: string; port: number }>).then((info) => {
+        if (info) {
+          setHostIp(info.ip);
+          setSignalingPort(info.port);
+        }
+      }).catch(() => {});
+
+      // Request server status
+      (window.electron.ipcRenderer.invoke('get-server-status') as Promise<'running' | 'stopped' | 'starting' | 'error'>).then((status) => {
+        if (status) {
+          setServerStatus(status);
         }
       }).catch(() => {});
     }
@@ -228,19 +245,24 @@ export const App: React.FC = () => {
     setError(null);
   };
 
-  const handleJoinRoom = () => {
-    if (!joinCode.trim()) {
-      setError({ type: 'join-error', message: 'Please enter a room code', timestamp: Date.now() });
+  const handleJoinHost = () => {
+    if (!joinIp.trim()) {
+      setError({ type: 'join-error', message: 'Please enter the host IP address', timestamp: Date.now() });
+      return;
+    }
+    
+    const port = parseInt(joinPort, 10);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      setError({ type: 'join-error', message: 'Please enter a valid port number (1-65535)', timestamp: Date.now() });
       return;
     }
     
     if (window.electron) {
-      window.electron.ipcRenderer.invoke('join-room', joinCode.trim()).then((result: any) => {
+      window.electron.ipcRenderer.invoke('join-host', { ip: joinIp.trim(), port }).then((result: any) => {
         if (result.success) {
           setError(null);
-          setJoinCode('');
         } else {
-          setError({ type: 'join-error', message: result.error || 'Failed to join room', timestamp: Date.now() });
+          setError({ type: 'join-error', message: result.error || 'Failed to connect to host', timestamp: Date.now() });
         }
       });
     }
@@ -273,7 +295,11 @@ export const App: React.FC = () => {
           <>
             <div className="status-section">
               <ConnectionStatus isCapturing={isCapturing} connectedUsers={connectedUsers.length} />
-              <RoomCodeDisplay roomCode={roomCode} />
+              <HostInfoDisplay 
+                ipAddress={hostIp} 
+                port={signalingPort} 
+                serverStatus={serverStatus} 
+              />
             </div>
 
             <div className="control-section">
@@ -313,22 +339,37 @@ export const App: React.FC = () => {
         ) : (
           <div className="join-section">
             <div className="join-container">
-              <h2>Join a Room</h2>
-              <p>Enter the room code provided by the host</p>
+              <h2>Connect to Host</h2>
+              <p>Enter the host's IP address and port to connect</p>
               <div className="join-form">
-                <input
-                  type="text"
-                  placeholder="Enter room code"
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                  onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
-                  className="join-input"
-                  maxLength={6}
-                />
-                <button onClick={handleJoinRoom} className="join-button">
-                  Join Room
+                <div className="input-group" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <input
+                    type="text"
+                    placeholder="IP Address (e.g., 192.168.1.100)"
+                    value={joinIp}
+                    onChange={(e) => setJoinIp(e.target.value)}
+                    className="join-input"
+                    style={{ flex: 2 }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Port"
+                    value={joinPort}
+                    onChange={(e) => setJoinPort(e.target.value.replace(/\D/g, ''))}
+                    onKeyPress={(e) => e.key === 'Enter' && handleJoinHost()}
+                    className="join-input"
+                    style={{ flex: 1, maxWidth: '100px' }}
+                    maxLength={5}
+                  />
+                </div>
+                <button onClick={handleJoinHost} className="join-button">
+                  Connect
                 </button>
               </div>
+              <p style={{ marginTop: '16px', fontSize: '0.9em', color: '#666' }}>
+                The host needs to share their IP address and port with you.
+                Make sure the host has port forwarded the signaling port on their router.
+              </p>
             </div>
           </div>
         )}

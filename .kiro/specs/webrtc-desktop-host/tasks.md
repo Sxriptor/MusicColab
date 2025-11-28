@@ -53,31 +53,41 @@
   - **Property 3: Stream Delivery Consistency**
   - **Validates: Requirements 2.3, 2.4**
 
-- [x] 5. Implement room code generation and management
+- [x] 5. Implement local Python signaling server
 
 
-  - Create unique room code generator
-  - Implement room state management
-  - Add room code display in UI
-  - _Requirements: 1.4, 1.5_
-
-- [ ]* 5.1 Write property test for unique room code generation
-  - **Property 1: Desktop Capture Initialization**
-  - **Validates: Requirements 1.4**
-
-- [x] 6. Implement signaling client
 
 
-  - Create WebSocket connection to signaling server
-  - Implement room registration with room code
-  - Add SDP offer/answer exchange
+  - Create Python WebSocket server for handling remote connections
+  - Implement SDP offer/answer relay between host and remote users
+  - Implement ICE candidate exchange mechanism
+  - Add connection lifecycle management (connect, disconnect, cleanup)
+  - Implement configurable port binding
+  - Add error handling and logging
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
+
+- [ ]* 5.1 Write unit tests for signaling server
+  - Test WebSocket connection handling
+  - Test SDP offer/answer relay
+  - Test ICE candidate exchange
+  - Test connection cleanup
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
+
+
+
+- [ ] 6. Implement signaling client (Electron)
+
+
+  - Create WebSocket connection to local signaling server
+  - Implement connection to host IP and port
+  - Add SDP offer/answer exchange via signaling server
   - Implement ICE candidate exchange
   - Add connection/disconnection notifications
-  - _Requirements: 2.1, 2.2_
+  - _Requirements: 2.1, 2.2, 2.3_
 
 - [ ]* 6.1 Write property test for signaling communication
   - **Property 2: Peer Connection Establishment**
-  - **Validates: Requirements 2.1**
+  - **Validates: Requirements 2.1, 2.2, 2.3**
 
 - [x] 7. Implement stream broadcasting to multiple peers
 
@@ -155,23 +165,28 @@
   - Implement exponential backoff for retries
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-- [ ]* 11.1 Write property test for connection error recovery
+- [x]* 11.1 Write property test for connection error recovery
+
   - **Property 13: Connection Error Recovery**
   - **Validates: Requirements 7.2, 7.3**
 
 - [x] 12. Implement UI components
 
 
-  - Create main window layout with room code display
+  - Create main window layout with host IP address and port display
+  - Implement signaling server status indicator
   - Implement connection status indicator
   - Create connected users list display
   - Add stream statistics display (bitrate, latency, FPS)
   - Implement start/stop sharing buttons
   - Create display selector dropdown
-  - _Requirements: 1.1, 1.5, 3.3, 3.4, 3.5_
+  - Add port forwarding setup instructions
+  - _Requirements: 1.1, 1.5, 3.3, 3.4, 3.5, 9.1_
 
 - [ ]* 12.1 Write unit tests for UI state management
   - Test connection count display accuracy
+
+
   - Test room code display
   - Test user list updates
   - _Requirements: 3.3, 3.4, 3.5_
@@ -181,8 +196,8 @@
 
   - Create graceful shutdown handler
   - Implement resource cleanup (close all peer connections)
-  - Add signaling server notification on shutdown
-  - Release room code
+  - Shut down local Python signaling server
+  - Release all network resources
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
 - [ ]* 13.1 Write property test for resource cleanup on shutdown

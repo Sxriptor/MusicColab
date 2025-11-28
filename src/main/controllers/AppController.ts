@@ -5,6 +5,7 @@ import { ConnectionTracker } from '../../services/ConnectionTracker';
 import { DisplayManager } from '../../services/DisplayManager';
 import { ErrorHandler } from '../../services/ErrorHandler';
 import { ShutdownManager } from '../../services/ShutdownManager';
+import { SignalingServerManager } from '../../services/SignalingServerManager';
 import { Logger } from '../../utils/logger';
 
 export class AppController {
@@ -15,6 +16,7 @@ export class AppController {
   private displayManager: DisplayManager;
   private errorHandler: ErrorHandler;
   private shutdownManager: ShutdownManager;
+  private signalingServer: SignalingServerManager;
   private isCapturing: boolean = false;
 
   constructor(mainWindow: BrowserWindow) {
@@ -27,6 +29,7 @@ export class AppController {
     this.displayManager = new DisplayManager(this.desktopCapture);
     this.errorHandler = new ErrorHandler();
     this.shutdownManager = new ShutdownManager();
+    this.signalingServer = new SignalingServerManager(8765);
 
     // Register services with shutdown manager
     this.shutdownManager.registerDesktopCapture(this.desktopCapture);
@@ -39,8 +42,35 @@ export class AppController {
     this.setupEventHandlers();
     await this.initializeRoom();
     await this.displayManager.initialize();
+    // Start the signaling server
+    await this.startSignalingServer();
     // Send initial state immediately after display manager is ready
     this.sendInitialState();
+  }
+
+  private async startSignalingServer(): Promise<void> {
+    this.signalingServer.setEventCallback((event, data) => {
+      try {
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+          if (event === 'status-changed') {
+            this.mainWindow.webContents.send('server-status-changed', data);
+          } else if (event === 'error') {
+            this.mainWindow.webContents.send('error', { type: 'server-error', message: data });
+          }
+        }
+      } catch (error) {
+        // Window may be closing, ignore send errors
+      }
+    });
+
+    const started = await this.signalingServer.start();
+    if (started) {
+      Logger.info('Signaling server started successfully');
+      const hostInfo = this.signalingServer.getHostInfo();
+      this.mainWindow.webContents.send('host-info-updated', hostInfo);
+    } else {
+      Logger.error('Failed to start signaling server');
+    }
   }
 
   private setupIpcHandlers(): void {
@@ -76,8 +106,14 @@ export class AppController {
       connectedUsers: this.connectionTracker.getConnectionCount(),
     }));
 
-    ipcMain.handle('join-room', async (_, roomCode: string) => {
-      return this.joinRoom(roomCode);
+    // Host info and server status handlers
+    ipcMain.handle('get-host-info', () => this.signalingServer.getHostInfo());
+    
+    ipcMain.handle('get-server-status', () => this.signalingServer.getStatus());
+
+    // Join host handler (for remote users connecting to a host)
+    ipcMain.handle('join-host', async (_, { ip, port }: { ip: string; port: number }) => {
+      return this.joinHost(ip, port);
     });
 
     // Handle capture started from renderer
@@ -148,6 +184,13 @@ export class AppController {
       }));
       this.mainWindow.webContents.send('displays-updated', displayOptions);
     }
+
+    // Send host info
+    const hostInfo = this.signalingServer.getHostInfo();
+    this.mainWindow.webContents.send('host-info-updated', hostInfo);
+    
+    // Send server status
+    this.mainWindow.webContents.send('server-status-changed', this.signalingServer.getStatus());
   }
 
   private async startCapture(displayId?: string): Promise<{ success: boolean; sourceId?: string; error?: string }> {
@@ -188,19 +231,30 @@ export class AppController {
     return { success: false, error: 'Failed to switch display' };
   }
 
-  private joinRoom(roomCode: string): { success: boolean; error?: string } {
-    // Validate room code format (should be 6 alphanumeric characters)
-    if (!roomCode || roomCode.length !== 6 || !/^[A-Z0-9]{6}$/.test(roomCode)) {
-      return { success: false, error: 'Invalid room code format' };
+  private joinHost(ip: string, port: number): { success: boolean; error?: string } {
+    // Validate IP address format
+    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ip || !ipRegex.test(ip)) {
+      return { success: false, error: 'Invalid IP address format' };
     }
 
-    // TODO: Implement actual room joining logic with signaling server
-    // For now, just validate the format
-    Logger.info(`Join room request for code: ${roomCode}`);
+    // Validate port
+    if (!port || port < 1 || port > 65535) {
+      return { success: false, error: 'Invalid port number' };
+    }
+
+    // TODO: Implement actual connection logic via SignalingClient
+    // For now, just validate the format and log
+    Logger.info(`Join host request for ${ip}:${port}`);
+    
+    // The actual WebRTC connection will be handled in the renderer process
+    // using the SignalingClient
     return { success: true };
   }
 
   async shutdown(): Promise<void> {
+    // Stop the signaling server first
+    await this.signalingServer.stop();
     await this.shutdownManager.shutdown();
   }
 }

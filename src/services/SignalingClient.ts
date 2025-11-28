@@ -8,13 +8,17 @@ export type SignalingEventType =
   | 'user-left'
   | 'offer'
   | 'answer'
-  | 'ice-candidate';
+  | 'ice-candidate'
+  | 'host-disconnected'
+  | 'registered';
 
 export interface SignalingMessage {
   type: string;
-  roomCode?: string;
   userId?: string;
+  clientId?: string;
   data?: any;
+  hostConnected?: boolean;
+  role?: string;
 }
 
 export type SignalingEventCallback = (event: SignalingEventType, data?: any) => void;
@@ -22,7 +26,8 @@ export type SignalingEventCallback = (event: SignalingEventType, data?: any) => 
 export class SignalingClient {
   private ws: WebSocket | null = null;
   private serverUrl: string = '';
-  private roomCode: string = '';
+  private clientId: string = '';
+  private isHost: boolean = false;
   private isConnected: boolean = false;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 3;
@@ -32,6 +37,33 @@ export class SignalingClient {
 
   setEventCallback(callback: SignalingEventCallback): void {
     this.eventCallback = callback;
+  }
+
+  /**
+   * Connect to the signaling server as a host
+   * @param host IP address of the signaling server
+   * @param port Port number of the signaling server
+   */
+  async connectAsHost(host: string, port: number): Promise<boolean> {
+    const serverUrl = `ws://${host}:${port}`;
+    this.isHost = true;
+    const connected = await this.connect(serverUrl);
+    if (connected) {
+      // Register as host
+      this.sendMessage({ type: 'register-host' });
+    }
+    return connected;
+  }
+
+  /**
+   * Connect to the signaling server as a remote user
+   * @param host IP address of the signaling server
+   * @param port Port number of the signaling server
+   */
+  async connectAsRemote(host: string, port: number): Promise<boolean> {
+    const serverUrl = `ws://${host}:${port}`;
+    this.isHost = false;
+    return this.connect(serverUrl);
   }
 
   async connect(serverUrl: string): Promise<boolean> {
@@ -78,11 +110,24 @@ export class SignalingClient {
       const message: SignalingMessage = JSON.parse(data);
       
       switch (message.type) {
+        case 'welcome':
+          // Server assigned us a client ID
+          this.clientId = message.clientId || '';
+          Logger.info(`Received client ID: ${this.clientId}, host connected: ${message.hostConnected}`);
+          break;
+        case 'registered':
+          // Host registration confirmed
+          Logger.info(`Registered as: ${message.role}`);
+          this.emitEvent('registered', { role: message.role });
+          break;
         case 'user-joined':
           this.emitEvent('user-joined', { userId: message.userId });
           break;
         case 'user-left':
           this.emitEvent('user-left', { userId: message.userId });
+          break;
+        case 'host-disconnected':
+          this.emitEvent('host-disconnected');
           break;
         case 'offer':
           this.emitEvent('offer', { userId: message.userId, offer: message.data });
@@ -92,6 +137,9 @@ export class SignalingClient {
           break;
         case 'ice-candidate':
           this.emitEvent('ice-candidate', { userId: message.userId, candidate: message.data });
+          break;
+        case 'pong':
+          // Heartbeat response, ignore
           break;
         default:
           Logger.warn(`Unknown message type: ${message.type}`);
@@ -123,56 +171,53 @@ export class SignalingClient {
     }, delay);
   }
 
-  registerRoom(roomCode: string): void {
-    this.roomCode = roomCode;
-    this.sendMessage({
-      type: 'register-room',
-      roomCode,
-    });
-    Logger.info(`Registered room: ${roomCode}`);
-  }
-
-  sendOffer(userId: string, offer: RTCSessionDescriptionInit): void {
-    this.sendMessage({
+  /**
+   * Send SDP offer to a specific user (host to remote) or to host (remote to host)
+   */
+  sendOffer(userId: string | null, offer: RTCSessionDescriptionInit): void {
+    const message: SignalingMessage = {
       type: 'offer',
-      roomCode: this.roomCode,
-      userId,
       data: offer,
-    });
+    };
+    if (userId) {
+      message.userId = userId;
+    }
+    this.sendMessage(message);
   }
 
-  sendAnswer(userId: string, answer: RTCSessionDescriptionInit): void {
-    this.sendMessage({
+  /**
+   * Send SDP answer to a specific user (host to remote) or to host (remote to host)
+   */
+  sendAnswer(userId: string | null, answer: RTCSessionDescriptionInit): void {
+    const message: SignalingMessage = {
       type: 'answer',
-      roomCode: this.roomCode,
-      userId,
       data: answer,
-    });
+    };
+    if (userId) {
+      message.userId = userId;
+    }
+    this.sendMessage(message);
   }
 
-  sendICECandidate(userId: string, candidate: RTCIceCandidate): void {
-    this.sendMessage({
+  /**
+   * Send ICE candidate to a specific user (host to remote) or to host (remote to host)
+   */
+  sendICECandidate(userId: string | null, candidate: RTCIceCandidate): void {
+    const message: SignalingMessage = {
       type: 'ice-candidate',
-      roomCode: this.roomCode,
-      userId,
       data: candidate.toJSON(),
-    });
+    };
+    if (userId) {
+      message.userId = userId;
+    }
+    this.sendMessage(message);
   }
 
-  notifyUserConnected(userId: string): void {
-    this.sendMessage({
-      type: 'user-connected',
-      roomCode: this.roomCode,
-      userId,
-    });
-  }
-
-  notifyUserDisconnected(userId: string): void {
-    this.sendMessage({
-      type: 'user-disconnected',
-      roomCode: this.roomCode,
-      userId,
-    });
+  /**
+   * Send a ping to keep the connection alive
+   */
+  sendPing(): void {
+    this.sendMessage({ type: 'ping' });
   }
 
   private sendMessage(message: SignalingMessage): void {
@@ -194,15 +239,11 @@ export class SignalingClient {
 
   disconnect(): void {
     if (this.ws) {
-      this.sendMessage({
-        type: 'leave-room',
-        roomCode: this.roomCode,
-      });
       this.ws.close();
       this.ws = null;
     }
     this.isConnected = false;
-    this.roomCode = '';
+    this.clientId = '';
     Logger.info('Disconnected from signaling server');
   }
 
@@ -210,7 +251,15 @@ export class SignalingClient {
     return this.isConnected;
   }
 
-  getRoomCode(): string {
-    return this.roomCode;
+  getClientId(): string {
+    return this.clientId;
+  }
+
+  getIsHost(): boolean {
+    return this.isHost;
+  }
+
+  getServerUrl(): string {
+    return this.serverUrl;
   }
 }

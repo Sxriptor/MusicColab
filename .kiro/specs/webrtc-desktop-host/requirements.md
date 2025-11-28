@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The WebRTC Desktop Host App is the core component of a Parsec-like desktop sharing system. This MVP focuses on capturing the Windows desktop and streaming it to remote users via WebRTC with low latency. The host app runs as an Electron-based desktop application that manages WebRTC peer connections, handles desktop capture, and streams video/audio to connected clients. This component establishes the foundation for multi-user remote desktop access without the overhead of traditional virtualization.
+The WebRTC Desktop Host App is a Parsec-like desktop sharing system that enables peer-to-peer remote desktop access without external backend infrastructure. The system consists of two components: (1) an Electron-based host application that captures the Windows desktop and manages WebRTC peer connections, and (2) a local Python signaling server that facilitates WebRTC connection establishment. The host user runs both components locally, port-forwards a single port on their router, and remote users connect directly to the host's IP address and port. This architecture prioritizes low latency, user control, and minimal infrastructure overhead.
 
 ## Glossary
 
@@ -10,7 +10,8 @@ The WebRTC Desktop Host App is the core component of a Parsec-like desktop shari
 - **Remote User**: A user connecting to the host app to view and interact with the shared desktop
 - **WebRTC**: Web Real-Time Communication protocol for peer-to-peer audio/video streaming
 - **Desktop Capture**: The process of capturing the entire Windows desktop screen as a video stream
-- **Signaling Server**: A server that facilitates WebRTC connection establishment (SDP/ICE exchange) between host and remote users
+- **Local Signaling Server**: A Python-based server running on the host machine that facilitates WebRTC connection establishment (SDP/ICE exchange) between host and remote users
+- **Port Forwarding**: Network configuration where the host user forwards a port on their router to expose the local signaling server to the internet
 - **Peer Connection**: A direct WebRTC connection between the host and a single remote user
 - **Video Codec**: Compression algorithm for video (H.264 or H.265 for hardware acceleration)
 - **Audio Codec**: Compression algorithm for audio (Opus for WebRTC)
@@ -19,6 +20,8 @@ The WebRTC Desktop Host App is the core component of a Parsec-like desktop shari
 - **Frame Rate**: Number of video frames captured and transmitted per second (measured in FPS)
 - **Bitrate**: Amount of data transmitted per unit time (measured in Kbps or Mbps)
 - **Latency**: Time delay between desktop capture and display on remote user's screen
+- **Host IP Address**: The public IP address of the host machine (used by remote users to connect)
+- **Signaling Port**: The network port on which the local signaling server listens for incoming connections
 
 ## Requirements
 
@@ -28,23 +31,24 @@ The WebRTC Desktop Host App is the core component of a Parsec-like desktop shari
 
 #### Acceptance Criteria
 
-1. WHEN the host app launches THEN the system SHALL initialize WebRTC infrastructure and display a user interface with connection status
+1. WHEN the host app launches THEN the system SHALL initialize WebRTC infrastructure, start the local signaling server, and display a user interface with connection status
 2. WHEN the host app is running THEN the system SHALL continuously capture the Windows desktop at a minimum of 30 FPS
 3. WHEN desktop capture begins THEN the system SHALL encode the captured frames using H.264 or H.265 codec with hardware acceleration
-4. WHEN the host app starts THEN the system SHALL generate a unique room code that remote users can use to connect
-5. WHEN the host app is active THEN the system SHALL display the current room code and connection status in the UI
+4. WHEN the host app starts THEN the system SHALL display the host machine's IP address and the signaling port in the UI
+5. WHEN the host app is active THEN the system SHALL display the current connection status and list of connected remote users in the UI
 
 ### Requirement 2
 
-**User Story:** As a remote user, I want to connect to the host app using a room code, so that I can view the shared desktop in real-time.
+**User Story:** As a remote user, I want to connect to the host app using the host's IP address and port, so that I can view the shared desktop in real-time.
 
 #### Acceptance Criteria
 
-1. WHEN a remote user provides a valid room code THEN the system SHALL establish a WebRTC peer connection with the host app
-2. WHEN a peer connection is established THEN the system SHALL begin streaming the desktop video to the remote user
-3. WHEN the remote user receives the video stream THEN the system SHALL decode and display the desktop on their screen
-4. WHEN a peer connection is active THEN the system SHALL maintain the connection and continue streaming until the user disconnects
-5. WHEN the remote user disconnects THEN the system SHALL cleanly close the peer connection and free associated resources
+1. WHEN a remote user provides a valid host IP address and port THEN the system SHALL establish a connection to the local signaling server
+2. WHEN connected to the signaling server THEN the system SHALL exchange WebRTC SDP offers and ICE candidates to establish a peer connection
+3. WHEN a peer connection is established THEN the system SHALL begin streaming the desktop video to the remote user
+4. WHEN the remote user receives the video stream THEN the system SHALL decode and display the desktop on their screen
+5. WHEN a peer connection is active THEN the system SHALL maintain the connection and continue streaming until the user disconnects
+6. WHEN the remote user disconnects THEN the system SHALL cleanly close the peer connection and free associated resources
 
 ### Requirement 3
 
@@ -116,5 +120,17 @@ The WebRTC Desktop Host App is the core component of a Parsec-like desktop shari
 2. WHEN sharing is stopped THEN the system SHALL close all active peer connections
 3. WHEN all connections are closed THEN the system SHALL display a confirmation message
 4. WHEN the host app is closed THEN the system SHALL clean up all WebRTC resources and connections
-5. WHEN the host app shuts down THEN the system SHALL release the room code and notify the signaling server
+5. WHEN the host app shuts down THEN the system SHALL shut down the local signaling server and release all network resources
+
+### Requirement 9
+
+**User Story:** As a host user, I want the local signaling server to handle WebRTC connection establishment, so that remote users can connect without external infrastructure.
+
+#### Acceptance Criteria
+
+1. WHEN the host app starts THEN the system SHALL launch a local Python signaling server on a configurable port
+2. WHEN the signaling server is running THEN the system SHALL listen for incoming WebSocket connections from remote users
+3. WHEN a remote user connects to the signaling server THEN the system SHALL facilitate SDP offer/answer exchange between the remote user and the host
+4. WHEN a remote user connects THEN the system SHALL facilitate ICE candidate exchange to establish the peer connection
+5. WHEN a peer connection is established THEN the system SHALL maintain the WebSocket connection for signaling purposes until the peer disconnects
 

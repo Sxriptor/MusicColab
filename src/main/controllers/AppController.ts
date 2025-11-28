@@ -39,6 +39,7 @@ export class AppController {
     this.setupEventHandlers();
     await this.initializeRoom();
     await this.displayManager.initialize();
+    // Send initial state immediately after display manager is ready
     this.sendInitialState();
   }
 
@@ -52,7 +53,13 @@ export class AppController {
     ipcMain.handle('stop-capture', () => this.stopCapture());
     
     ipcMain.handle('get-displays', async () => {
-      return this.displayManager.getAvailableDisplays();
+      const displays = this.displayManager.getAvailableDisplays();
+      // Convert Display[] to DisplayOption[] format
+      return displays.map((display) => ({
+        displayId: display.displayId,
+        displayName: display.displayName,
+        isPrimary: display.isPrimary,
+      }));
     });
     
     ipcMain.handle('get-sources', async () => {
@@ -68,6 +75,10 @@ export class AppController {
       roomCode: this.roomManager.getRoomCode(),
       connectedUsers: this.connectionTracker.getConnectionCount(),
     }));
+
+    ipcMain.handle('join-room', async (_, roomCode: string) => {
+      return this.joinRoom(roomCode);
+    });
 
     // Handle capture started from renderer
     ipcMain.on('capture-started-renderer', (_, displayId: string) => {
@@ -98,7 +109,13 @@ export class AppController {
       try {
         if (this.mainWindow && !this.mainWindow.isDestroyed()) {
           if (event === 'displays-updated') {
-            this.mainWindow.webContents.send('displays-updated', data);
+            // Convert Display[] to DisplayOption[] format
+            const displayOptions = data.map((display: any) => ({
+              displayId: display.displayId,
+              displayName: display.displayName,
+              isPrimary: display.isPrimary,
+            }));
+            this.mainWindow.webContents.send('displays-updated', displayOptions);
           } else if (event === 'display-disconnected') {
             this.mainWindow.webContents.send('display-disconnected', data);
           }
@@ -121,7 +138,16 @@ export class AppController {
   }
 
   private sendInitialState(): void {
-    this.mainWindow.webContents.send('displays-updated', this.displayManager.getAvailableDisplays());
+    const displays = this.displayManager.getAvailableDisplays();
+    if (displays && displays.length > 0) {
+      // Convert Display[] to DisplayOption[] format
+      const displayOptions = displays.map((display) => ({
+        displayId: display.displayId,
+        displayName: display.displayName,
+        isPrimary: display.isPrimary,
+      }));
+      this.mainWindow.webContents.send('displays-updated', displayOptions);
+    }
   }
 
   private async startCapture(displayId?: string): Promise<{ success: boolean; sourceId?: string; error?: string }> {
@@ -160,6 +186,18 @@ export class AppController {
       return { success: true, sourceId: displayId };
     }
     return { success: false, error: 'Failed to switch display' };
+  }
+
+  private joinRoom(roomCode: string): { success: boolean; error?: string } {
+    // Validate room code format (should be 6 alphanumeric characters)
+    if (!roomCode || roomCode.length !== 6 || !/^[A-Z0-9]{6}$/.test(roomCode)) {
+      return { success: false, error: 'Invalid room code format' };
+    }
+
+    // TODO: Implement actual room joining logic with signaling server
+    // For now, just validate the format
+    Logger.info(`Join room request for code: ${roomCode}`);
+    return { success: true };
   }
 
   async shutdown(): Promise<void> {

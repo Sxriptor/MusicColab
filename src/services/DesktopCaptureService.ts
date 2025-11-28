@@ -21,12 +21,21 @@ export class DesktopCaptureService {
 
   async getAvailableDisplays(): Promise<Display[]> {
     try {
+      Logger.info('Calling desktopCapturer.getSources()...');
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: 150, height: 150 },
       });
 
       Logger.info(`Found ${sources.length} displays`);
+      
+      if (sources.length === 0) {
+        Logger.warn('No display sources found - this may indicate a permissions issue or the app is not running in the main process');
+      } else {
+        sources.forEach((source, index) => {
+          Logger.info(`Display ${index}: id=${source.id}, name=${source.name}`);
+        });
+      }
 
       return sources.map((source, index) => ({
         displayId: source.id,

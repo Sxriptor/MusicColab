@@ -20,7 +20,33 @@ export class DisplayManager {
   }
 
   async initialize(): Promise<void> {
-    await this.refreshDisplays();
+    // Try to get displays with retries in case they're not immediately available
+    let retries = 5;
+    let lastError: any = null;
+    
+    while (retries > 0 && this.availableDisplays.length === 0) {
+      try {
+        await this.refreshDisplays();
+        if (this.availableDisplays.length > 0) {
+          Logger.info(`Successfully initialized with ${this.availableDisplays.length} displays`);
+          break;
+        }
+      } catch (error) {
+        lastError = error;
+        Logger.error(`Error refreshing displays (retry ${6 - retries})`, error);
+      }
+      
+      retries--;
+      if (retries > 0) {
+        Logger.info(`Retrying display refresh in 200ms... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+    
+    if (this.availableDisplays.length === 0) {
+      Logger.warn('No displays found after retries', lastError);
+    }
+    
     this.startDisplayMonitoring();
   }
 

@@ -20,6 +20,8 @@ export const App: React.FC = () => {
     packetsLost: 0,
   });
   const [error, setError] = useState<ErrorInfo | null>(null);
+  const [activeTab, setActiveTab] = useState<'host' | 'join'>('host');
+  const [joinCode, setJoinCode] = useState<string>('');
   
   const videoStreamRef = useRef<MediaStream | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -43,10 +45,16 @@ export const App: React.FC = () => {
       setConnectedUsers((prev) => prev.filter((u) => u.userId !== userId));
     };
 
-    const handleDisplaysUpdated = (displayList: DisplayOption[]) => {
-      setDisplays(displayList);
-      if (displayList.length > 0 && !selectedDisplayId) {
-        setSelectedDisplayId(displayList[0].displayId);
+    const handleDisplaysUpdated = (displayList: DisplayOption[] | undefined) => {
+      console.log('Displays updated:', displayList);
+      if (displayList && Array.isArray(displayList)) {
+        console.log(`Setting ${displayList.length} displays`);
+        setDisplays(displayList);
+        if (displayList.length > 0 && !selectedDisplayId) {
+          setSelectedDisplayId(displayList[0].displayId);
+        }
+      } else {
+        console.log('Invalid display list received:', displayList);
       }
     };
 
@@ -54,21 +62,31 @@ export const App: React.FC = () => {
       setStreamStats(stats);
     };
 
-    const handleError = (errorInfo: ErrorInfo) => {
-      setError(errorInfo);
+    const handleError = (errorInfo: ErrorInfo | { type: string; message: string }) => {
+      const error = 'timestamp' in errorInfo ? errorInfo : { ...errorInfo, timestamp: Date.now() };
+      setError(error);
     };
 
     if (window.electron) {
-      window.electron.ipcRenderer.on('room-code-generated', handleRoomCodeGenerated);
-      window.electron.ipcRenderer.on('capture-stopped', handleCaptureStopped);
-      window.electron.ipcRenderer.on('user-connected', handleUserConnected);
-      window.electron.ipcRenderer.on('user-disconnected', handleUserDisconnected);
-      window.electron.ipcRenderer.on('displays-updated', handleDisplaysUpdated);
-      window.electron.ipcRenderer.on('stats-updated', handleStatsUpdated);
-      window.electron.ipcRenderer.on('error', handleError);
+      window.electron.ipcRenderer.on('room-code-generated', (_, code: string) => handleRoomCodeGenerated(code));
+      window.electron.ipcRenderer.on('capture-stopped', () => handleCaptureStopped());
+      window.electron.ipcRenderer.on('user-connected', (_, user: ConnectedUser) => handleUserConnected(user));
+      window.electron.ipcRenderer.on('user-disconnected', (_, userId: string) => handleUserDisconnected(userId));
+      window.electron.ipcRenderer.on('displays-updated', (_, displayList: DisplayOption[]) => handleDisplaysUpdated(displayList));
+      window.electron.ipcRenderer.on('stats-updated', (_, stats: StreamStatsData) => handleStatsUpdated(stats));
+      window.electron.ipcRenderer.on('error', (_, errorInfo: ErrorInfo | { type: string; message: string }) => handleError(errorInfo));
 
       // Request initial data
-      window.electron.ipcRenderer.invoke('get-displays');
+      (window.electron.ipcRenderer.invoke('get-displays') as Promise<DisplayOption[]>).then((displayList: DisplayOption[]) => {
+        handleDisplaysUpdated(displayList);
+      }).catch(() => {});
+      
+      // Request room code in case it was generated before listener was attached
+      (window.electron.ipcRenderer.invoke('get-room-code') as Promise<string>).then((code: string) => {
+        if (code) {
+          setRoomCode(code);
+        }
+      }).catch(() => {});
     }
 
     return () => {
@@ -162,7 +180,7 @@ export const App: React.FC = () => {
 
     const displayId = selectedDisplayId || displays[0]?.displayId;
     if (!displayId) {
-      setError({ type: 'capture-error', message: 'No display selected' });
+      setError({ type: 'capture-error', message: 'No display selected', timestamp: Date.now() });
       return;
     }
 
@@ -178,11 +196,11 @@ export const App: React.FC = () => {
         // Notify main process that capture started
         window.electron.ipcRenderer.send('capture-started-renderer', result.sourceId);
       } else {
-        setError({ type: 'capture-error', message: 'Failed to capture desktop' });
+        setError({ type: 'capture-error', message: 'Failed to capture desktop', timestamp: Date.now() });
         window.electron.ipcRenderer.send('capture-error-renderer', 'Failed to capture desktop');
       }
     } else {
-      setError({ type: 'capture-error', message: result.error || 'Failed to start capture' });
+      setError({ type: 'capture-error', message: result.error || 'Failed to start capture', timestamp: Date.now() });
     }
   };
 
@@ -191,7 +209,7 @@ export const App: React.FC = () => {
     setIsCapturing(false);
     
     if (window.electron) {
-      await window.electron.ipcRenderer.invoke('stop-capture');
+      await (window.electron.ipcRenderer.invoke('stop-capture') as Promise<any>).catch(() => {});
     }
   };
 
@@ -210,53 +228,110 @@ export const App: React.FC = () => {
     setError(null);
   };
 
+  const handleJoinRoom = () => {
+    if (!joinCode.trim()) {
+      setError({ type: 'join-error', message: 'Please enter a room code', timestamp: Date.now() });
+      return;
+    }
+    
+    if (window.electron) {
+      window.electron.ipcRenderer.invoke('join-room', joinCode.trim()).then((result: any) => {
+        if (result.success) {
+          setError(null);
+          setJoinCode('');
+        } else {
+          setError({ type: 'join-error', message: result.error || 'Failed to join room', timestamp: Date.now() });
+        }
+      });
+    }
+  };
+
   return (
     <div className="app-container">
       <header className="app-header">
         <h1>WebRTC Desktop Host</h1>
+        <div className="tab-navigation">
+          <button
+            className={`tab-button ${activeTab === 'host' ? 'active' : ''}`}
+            onClick={() => setActiveTab('host')}
+          >
+            Host
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'join' ? 'active' : ''}`}
+            onClick={() => setActiveTab('join')}
+          >
+            Join
+          </button>
+        </div>
       </header>
 
       <ErrorDisplay error={error} onDismiss={handleDismissError} />
 
       <main className="app-main">
-        <div className="status-section">
-          <ConnectionStatus isCapturing={isCapturing} connectedUsers={connectedUsers.length} />
-          <RoomCodeDisplay roomCode={roomCode} />
-        </div>
+        {activeTab === 'host' ? (
+          <>
+            <div className="status-section">
+              <ConnectionStatus isCapturing={isCapturing} connectedUsers={connectedUsers.length} />
+              <RoomCodeDisplay roomCode={roomCode} />
+            </div>
 
-        <div className="control-section">
-          <DisplaySelector
-            displays={displays}
-            selectedDisplayId={selectedDisplayId}
-            onSelectDisplay={handleSelectDisplay}
-            disabled={false}
-          />
-          <ControlPanel
-            isCapturing={isCapturing}
-            onStartCapture={handleStartCapture}
-            onStopCapture={handleStopCapture}
-          />
-        </div>
+            <div className="control-section">
+              <DisplaySelector
+                displays={displays || []}
+                selectedDisplayId={selectedDisplayId}
+                onSelectDisplay={handleSelectDisplay}
+                disabled={false}
+              />
+              <ControlPanel
+                isCapturing={isCapturing}
+                onStartCapture={handleStartCapture}
+                onStopCapture={handleStopCapture}
+              />
+            </div>
 
-        {isCapturing && (
-          <div className="preview-section">
-            <h3>Preview</h3>
-            <video
-              ref={previewVideoRef}
-              autoPlay
-              muted
-              playsInline
-              controls
-              className="preview-video"
-              style={{ width: '100%', height: '600px', backgroundColor: '#000', display: 'block' }}
-            />
+            {isCapturing && (
+              <div className="preview-section">
+                <h3>Preview</h3>
+                <video
+                  ref={previewVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  controls
+                  className="preview-video"
+                  style={{ width: '100%', height: '600px', backgroundColor: '#000', display: 'block' }}
+                />
+              </div>
+            )}
+
+            <div className="info-section">
+              <ConnectedUsersList users={connectedUsers} />
+              {isCapturing && <StreamStats stats={streamStats} />}
+            </div>
+          </>
+        ) : (
+          <div className="join-section">
+            <div className="join-container">
+              <h2>Join a Room</h2>
+              <p>Enter the room code provided by the host</p>
+              <div className="join-form">
+                <input
+                  type="text"
+                  placeholder="Enter room code"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                  onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
+                  className="join-input"
+                  maxLength={6}
+                />
+                <button onClick={handleJoinRoom} className="join-button">
+                  Join Room
+                </button>
+              </div>
+            </div>
           </div>
         )}
-
-        <div className="info-section">
-          <ConnectedUsersList users={connectedUsers} />
-          {isCapturing && <StreamStats stats={streamStats} />}
-        </div>
       </main>
     </div>
   );

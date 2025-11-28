@@ -1,0 +1,77 @@
+appId: com.webrtcdesktophost.app
+productName: WebRTC Desktop Host
+directories:
+  buildResources: assets
+  output: dist/packages
+
+files:
+  - dist/**/*
+  - server/**/*
+  - node_modules/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  certificateFile: null
+  certificatePassword: null
+  signingHashAlgorithms:
+    - sha256
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: WebRTC Desktop Host
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+  installerHeaderIcon: assets/icon.ico
+
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.utilities
+  icon: assets/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.plist
+
+dmg:
+  contents:
+    - x: 110
+      y: 150
+      type: file
+    - x: 240
+      y: 150
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  icon: assets/icon.png
+
+deb:
+  depends:
+    - python3
+    - python3-pip
+  afterInstall: assets/linux/after-install.sh
+  afterRemove: assets/linux/after-remove.sh
+
+appImage:
+  artifactName: ${name}-${version}.${ext}
+
+publish:
+  provider: github
+  owner: yourusername
+  repo: webrtc-desktop-host

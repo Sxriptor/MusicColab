@@ -14,8 +14,64 @@
     "build:main": "tsc --project tsconfig.main.json",
     "build:renderer": "vite build",
     "start": "electron dist/main/main/index.js",
+    "build:dist": "npm run build && electron-builder",
+    "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
+    "build:linux": "npm run build && electron-builder --linux",
+    "build:all": "npm run build && electron-builder -mwl",
     "test": "vitest --run",
     "test:watch": "vitest"
+  },
+  "build": {
+    "appId": "com.webrtcdesktophost.app",
+    "productName": "WebRTC Desktop Host",
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist/packages"
+    },
+    "files": [
+      "dist/**/*",
+      "server/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "WebRTC Desktop Host"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    }
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -24,6 +80,7 @@
     "@vitejs/plugin-react": "^4.0.0",
     "concurrently": "^8.0.0",
     "electron": "^27.3.11",
+    "electron-builder": "^24.6.4",
     "fast-check": "^3.13.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
